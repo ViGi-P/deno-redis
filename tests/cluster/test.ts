@@ -1,5 +1,6 @@
 import { nextPorts, startRedisCluster, stopRedisCluster } from "./test_util.ts";
 import type { TestCluster } from "./test_util.ts";
+import type { ClusterConnectOptions } from "../../experimental/cluster/mod.ts";
 import { connect as connectToCluster } from "../../experimental/cluster/mod.ts";
 import {
   assert,
@@ -14,12 +15,14 @@ import {
   beforeAll,
   describe,
   it,
+  spy,
 } from "../../deps/std/testing.ts";
 import { calculateSlot } from "../../deps/cluster-key-slot.js";
 import { ErrorReplyError } from "../../errors.ts";
 import { connect, create } from "../../redis.ts";
+import type { RedisConnectOptions } from "../../redis.ts";
 import type { CommandExecutor } from "../../executor.ts";
-import type { Connection } from "../../connection.ts";
+import type { Connection, RedisConnectionOptions } from "../../connection.ts";
 import type { Redis } from "../../mod.ts";
 
 describe("experimental/cluster", () => {
@@ -41,6 +44,63 @@ describe("experimental/cluster", () => {
   afterAll(() => stopRedisCluster(cluster));
 
   afterEach(() => client.close());
+
+  it("correctly passes connection options to newRedis", async () => {
+    {
+      const newRedis = spy<
+        unknown,
+        [
+          options:
+            & RedisConnectOptions
+            & Partial<ClusterConnectOptions & RedisConnectionOptions>,
+        ],
+        Promise<Redis>
+      >(connect);
+      const clientWithOptions = await connectToCluster({
+        newRedis,
+        nodes,
+      });
+      assertEquals(
+        newRedis.calls.at(-1)?.args[0].noDelay,
+        undefined,
+        "should not pass `noDelay` option if absent (shared RedisConnectionOptions)",
+      );
+      assertEquals(
+        newRedis.calls.at(-1)?.args[0].nodes,
+        undefined,
+        "should never pass `nodes` option (exclusive of ClusterConnectOptions)",
+      );
+      clientWithOptions.close();
+    }
+
+    {
+      const newRedis = spy<
+        unknown,
+        [
+          options:
+            & RedisConnectOptions
+            & Partial<ClusterConnectOptions & RedisConnectionOptions>,
+        ],
+        Promise<Redis>
+      >(connect);
+      const clientWithOptions = await connectToCluster({
+        newRedis,
+        nodes,
+        noDelay: true,
+      });
+      assertEquals(
+        newRedis.calls.at(-1)?.args[0].noDelay,
+        true,
+        "should pass `noDelay` option if present (shared RedisConnectionOptions)",
+      );
+      assertEquals(
+        newRedis.calls.at(-1)?.args[0].nodes,
+        undefined,
+        "should never pass `nodes` option (exclusive of ClusterConnectOptions)",
+      );
+      clientWithOptions.close();
+    }
+  });
 
   it("del multiple keys in the same hash slot", async () => {
     await client.set("{hoge}foo", "a");
